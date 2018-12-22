@@ -1,0 +1,8 @@
+{
+    "name": "animecoin",
+    "symbol": "ani",
+    "algorithm": "equihash",
+    "requireShielding": true,
+    "peerMagic": "40832238",
+    "txfee": 0.0004
+}
