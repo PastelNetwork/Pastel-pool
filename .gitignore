@@ -5,4 +5,3 @@ pool_configs/*.json
 !pool_configs/zclassic_example.json
 !pool_configs/anime_example.json
 !pool_configs/anime_testnet_example.json
-package-lock.json
