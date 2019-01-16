@@ -2,7 +2,5 @@
     "name": "animecoin_testnet",
     "symbol": "ina",
     "algorithm": "equihash",
-    "requireShielding": true,
     "peerMagic": "1b1683d2",
-    "txfee": 0.0004
 }

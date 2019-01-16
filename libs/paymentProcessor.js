@@ -71,10 +71,8 @@ function SetupForPool(logger, poolOptions, setupFinished){
     var pplntTimeQualify = processingConfig.pplnt || 0.51; // 51%
     
     var getMarketStats = poolOptions.coin.getMarketStats === true;
-    var requireShielding = poolOptions.coin.requireShielding === true;
     var fee = parseFloat(poolOptions.coin.txfee) || parseFloat(0.0004);
 
-    logger.debug(logSystem, logComponent, logComponent + ' requireShielding: ' + requireShielding);
     logger.debug(logSystem, logComponent, logComponent + ' minConf: ' + minConfShield);
     logger.debug(logSystem, logComponent, logComponent + ' payments txfee reserve: ' + fee);
     logger.debug(logSystem, logComponent, logComponent + ' maxBlocksPerPayment: ' + maxBlocksPerPayment);
@@ -97,40 +95,6 @@ function SetupForPool(logger, poolOptions, setupFinished){
 
     function validateAddress (callback){
         daemon.cmd('validateaddress', [poolOptions.address], function(result) {
-            if (result.error){
-                logger.error(logSystem, logComponent, 'Error with payment processing daemon ' + JSON.stringify(result.error));
-                callback(true);
-            }
-            else if (!result.response || !result.response.ismine) {
-                logger.error(logSystem, logComponent,
-                    'Daemon does not own pool address - payment processing can not be done with this daemon, '
-                    + JSON.stringify(result.response));
-                callback(true);
-            }
-            else{
-                callback()
-            }
-        }, true);
-    }
-    function validateTAddress (callback) {
-        daemon.cmd('validateaddress', [poolOptions.tAddress], function(result) {
-            if (result.error){
-                logger.error(logSystem, logComponent, 'Error with payment processing daemon ' + JSON.stringify(result.error));
-                callback(true);
-            }
-            else if (!result.response || !result.response.ismine) {
-                logger.error(logSystem, logComponent,
-                    'Daemon does not own pool address - payment processing can not be done with this daemon, '
-                    + JSON.stringify(result.response));
-                callback(true);
-            }
-            else{
-                callback()
-            }
-        }, true);
-     }
-     function validateZAddress (callback) {
-        daemon.cmd('z_validateaddress', [poolOptions.zAddress], function(result) {
             if (result.error){
                 logger.error(logSystem, logComponent, 'Error with payment processing daemon ' + JSON.stringify(result.error));
                 callback(true);
@@ -178,14 +142,10 @@ function SetupForPool(logger, poolOptions, setupFinished){
         setupFinished(true);
     }
 
-    if (requireShielding === true) {
-        async.parallel([validateAddress, validateTAddress, validateZAddress, getBalance], asyncComplete);
-    } else {
-        async.parallel([validateAddress, validateTAddress, getBalance], asyncComplete);
-    }
+    async.parallel([validateAddress, getBalance], asyncComplete);
     
     //get t_address coinbalance
-    function listUnspent (addr, notAddr, minConf, displayBool, callback) {
+    function listUnspent (addr, minConf, displayBool, callback) {
         if (addr !== null) {
             var args = [minConf, 99999999, [addr]];
         } else {
@@ -202,7 +162,7 @@ function SetupForPool(logger, poolOptions, setupFinished){
                 var tBalance = parseFloat(0);
                 if (result[0].response != null && result[0].response.length > 0) {
                     for (var i = 0, len = result[0].response.length; i < len; i++) {
-                        if (result[0].response[i].address && result[0].response[i].address !== notAddr) {
+                        if (result[0].response[i].address) {
                             tBalance += parseFloat(result[0].response[i].amount || 0);
                         }
                     }
@@ -237,88 +197,6 @@ function SetupForPool(logger, poolOptions, setupFinished){
         });
     }
 
-    //send t_address balance to z_address
-    function sendTToZ (callback, tBalance) {
-        if (callback === true)
-            return;
-        if (tBalance === NaN) {
-            logger.error(logSystem, logComponent, 'tBalance === NaN for sendTToZ');
-            return;
-        }
-        if ((tBalance - 10000) <= 0)
-            return;
-
-        // do not allow more than a single z_sendmany operation at a time
-        if (opidCount > 0) {
-            logger.warning(logSystem, logComponent, 'sendTToZ is waiting, too many z_sendmany operations already in progress.');
-            return;
-        }
-
-        var amount = satoshisToCoins(tBalance - 10000);
-        var params = [poolOptions.address, [{'address': poolOptions.zAddress, 'amount': amount}]];
-        daemon.cmd('z_sendmany', params,
-            function (result) {
-                //Check if payments failed because wallet doesn't have enough coins to pay for tx fees
-                if (!result || result.error || result[0].error || !result[0].response) {
-                    logger.error(logSystem, logComponent, 'Error trying to shield balance '+amount+' '+JSON.stringify(result[0].error));
-                    callback = function (){};
-                    callback(true);
-                }
-                else {
-                    var opid = (result.response || result[0].response);                    
-                    opidCount++;
-                    opids.push(opid);
-                    logger.special(logSystem, logComponent, 'Shield balance ' + amount + ' ' + opid);
-                    callback = function (){};
-                    callback(null);
-                }
-            }
-        );
-    }
-
-    // send z_address balance to t_address
-    function sendZToT (callback, zBalance) {
-        if (callback === true)
-            return;
-        if (zBalance === NaN) {
-            logger.error(logSystem, logComponent, 'zBalance === NaN for sendZToT');
-            return;
-        }
-        if ((zBalance - 10000) <= 0)
-            return;
-
-        // do not allow more than a single z_sendmany operation at a time
-        if (opidCount > 0) {
-            logger.warning(logSystem, logComponent, 'sendZToT is waiting, too many z_sendmany operations already in progress.');
-            return;
-        }
-
-        var amount = satoshisToCoins(zBalance - 10000);
-        // unshield no more than 100 ZEC at a time
-        if (amount > 100.0)
-            amount = 100.0;
-
-        var params = [poolOptions.zAddress, [{'address': poolOptions.tAddress, 'amount': amount}]];
-        daemon.cmd('z_sendmany', params,
-            function (result) {
-                //Check if payments failed because wallet doesn't have enough coins to pay for tx fees
-                if (!result || result.error || result[0].error || !result[0].response) {
-                    logger.error(logSystem, logComponent, 'Error trying to send z_address coin balance to payout t_address.'+JSON.stringify(result[0].error));
-                    callback = function (){};
-                    callback(true);
-                }
-                else {
-                    var opid = (result.response || result[0].response);                    
-                    opidCount++;
-                    opids.push(opid);
-                    logger.special(logSystem, logComponent, 'Unshield funds for payout ' + amount + ' ' + opid);
-                    callback = function (){};
-                    callback(null);
-                }
-            }
-        );
-    }
-    
     function cacheMarketStats() {
         var marketStatsUpdate = [];
         var coin = logComponent.replace('_testnet', '').toLowerCase();
@@ -407,25 +285,6 @@ function SetupForPool(logger, poolOptions, setupFinished){
             }
         );
     }
-
-    // run shielding process every x minutes
-    var shieldIntervalState = 0; // do not send ZtoT and TtoZ and same time, this results in operation failed!
-    var shielding_interval = Math.max(parseInt(poolOptions.walletInterval || 1), 1) * 60 * 1000; // run every x minutes
-    // shielding not required for some equihash coins
-    if (requireShielding === true) {
-        var shieldInterval = setInterval(function() {
-            shieldIntervalState++;
-            switch (shieldIntervalState) {
-                case 1:
-                    listUnspent(poolOptions.address, null, minConfShield, false, sendTToZ);
-                    break;
-                default:
-                    listUnspentZ(poolOptions.zAddress, minConfShield, false, sendZToT);
-                    shieldIntervalState = 0;
-                    break;
-            }
-        }, shielding_interval);
-    }
     
     // network stats caching every 58 seconds
     var stats_interval = 58 * 1000;
@@ -441,97 +300,6 @@ function SetupForPool(logger, poolOptions, setupFinished){
             // update market stats using coinmarketcap
             cacheMarketStats();
         }, market_stats_interval);
-    }
-
-    // check operation statuses every 57 seconds
-    var opid_interval =  57 * 1000;
-    // shielding not required for some equihash coins
-    if (requireShielding === true) {
-        var checkOpids = function() {
-            clearTimeout(opidTimeout);
-            var checkOpIdSuccessAndGetResult = function(ops) {
-                var batchRPC = [];
-                // if there are no op-ids
-                if (ops.length == 0) {
-                    // and we think there is
-                    if (opidCount !== 0) {
-                        // clear them!
-                        opidCount = 0;
-                        opids = [];
-                        logger.warning(logSystem, logComponent, 'Clearing operation ids due to empty result set.');
-                    }
-                }
-                // loop through op-ids checking their status
-                ops.forEach(function(op, i){
-                    // check operation id status
-                    if (op.status == "success" || op.status == "failed") {
-                        // clear operation id result
-                        var opid_index = opids.indexOf(op.id);
-                        if (opid_index > -1) {
-                            // clear operation id count
-                            batchRPC.push(['z_getoperationresult', [[op.id]]]);
-                            opidCount--;
-                            opids.splice(opid_index, 1);
-                        }
-                        // log status to console
-                        if (op.status == "failed") {
-                            if (op.error) {
-                              logger.error(logSystem, logComponent, "Shielding operation failed " + op.id + " " + op.error.code +", " + op.error.message);
-                            } else {
-                              logger.error(logSystem, logComponent, "Shielding operation failed " + op.id);
-                            }
-                        } else {
-                            logger.special(logSystem, logComponent, 'Shielding operation success ' + op.id + '  txid: ' + op.result.txid);
-                        }
-                    } else if (op.status == "executing") {
-                        logger.special(logSystem, logComponent, 'Shielding operation in progress ' + op.id );
-                    }
-                });
-                // if there are no completed operations
-                if (batchRPC.length <= 0) {
-                    opidTimeout = setTimeout(checkOpids, opid_interval);
-                    return;
-                }
-                // clear results for completed operations
-                daemon.batchCmd(batchRPC, function(error, results){
-                    if (error || !results) {
-                        opidTimeout = setTimeout(checkOpids, opid_interval);
-                        logger.error(logSystem, logComponent, 'Error with RPC call z_getoperationresult ' + JSON.stringify(error));
-                        return;
-                    }
-                    // check result execution_secs vs pool_config
-                    results.forEach(function(result, i) {
-                        if (result.result[i] && parseFloat(result.result[i].execution_secs || 0) > shielding_interval) {
-                            logger.warning(logSystem, logComponent, 'Warning, walletInverval shorter than opid execution time of '+result.result[i].execution_secs+' secs.');
-                        }
-                    });
-                    // keep checking operation ids
-                    opidTimeout = setTimeout(checkOpids, opid_interval);
-                });
-            };
-            // check for completed operation ids
-            daemon.cmd('z_getoperationstatus', null, function (result) {
-                var err = false;
-                if (result.error) {
-                    err = true;
-                    logger.error(logSystem, logComponent, 'Error with RPC call z_getoperationstatus ' + JSON.stringify(result.error));
-                } else if (result.response) {
-                    checkOpIdSuccessAndGetResult(result.response);
-                } else {
-                    err = true;
-                    logger.error(logSystem, logComponent, 'No response from z_getoperationstatus RPC call.');
-                }
-                if (err === true) {
-                    opidTimeout = setTimeout(checkOpids, opid_interval);
-                    if (opidCount !== 0) {
-                        opidCount = 0;
-                        opids = [];
-                        logger.warning(logSystem, logComponent, 'Clearing operation ids due to RPC call errors.');
-                    }
-                }
-            }, true, true);
-        }
-        var opidTimeout = setTimeout(checkOpids, opid_interval);
     }
 
     function roundTo(n, digits) {
@@ -848,11 +616,6 @@ function SetupForPool(logger, poolOptions, setupFinished){
                         var err = null;
                         var performPayment = false;
 
-                        var notAddr = null;
-                        if (requireShielding === true) {
-                            notAddr = poolOptions.address;
-                        }
-
                         // calculate what the pool owes its miners
                         var feeSatoshi = coinsToSatoshies(fee);
                         var totalOwed = parseInt(0);
@@ -867,8 +630,8 @@ function SetupForPool(logger, poolOptions, setupFinished){
                             var worker = workers[w];
                             totalOwed = totalOwed + (worker.balance||0);
                         }
-                        // check if we have enough tAddress funds to begin payment processing
-                        listUnspent(null, notAddr, minConfPayout, false, function (error, tBalance){
+                        // check if we have enough funds to begin payment processing
+                        listUnspent(null, minConfPayout, false, function (error, tBalance){
                             if (error) {
                                 logger.error(logSystem, logComponent, 'Error checking pool balance before processing payments.');
                                 return callback(true);
